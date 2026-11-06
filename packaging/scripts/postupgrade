@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+BASE=/var/packages/SynoVPN
+"$BASE/scripts/start-stop-status" stop
+# Keep the existing identity when upgrading an earlier container preview.
+if [ ! -f "$BASE/etc/engine.token" ] && [ -f "$BASE/var/engine.token" ]; then
+    cp "$BASE/var/engine.token" "$BASE/etc/engine.token"
+    chmod 0600 "$BASE/etc/engine.token"
+fi
+# Also recover an installation whose resource stage stopped before postinst.
+exec "$BASE/scripts/postinst"

@@ -1,0 +1,7 @@
+.git
+dist
+runtime
+var
+.build
+**/*.exe
+**/*-source.zip

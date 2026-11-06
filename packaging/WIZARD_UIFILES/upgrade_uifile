@@ -1,0 +1,16 @@
+[
+  {
+    "step_title": "配置 SynoVPN 网关",
+    "items": [
+      {"desc": "预览版：依赖 Container Manager 持续运行。VPN 引擎使用宿主网络和网络管理权限，监听 UDP 500/4500；NAS 必须已启用 IPv4 转发。首次安装需联网构建运行镜像。请勿与其他占用相同端口的 VPN 服务同时运行。"},
+      {"type": "textfield", "subitems": [
+        {"key": "wizard_domain", "desc": "公网 VPN 域名", "defaultValue": "", "validator": {"allowBlank": false}},
+        {"key": "wizard_origin", "desc": "DSM HTTPS 地址（含端口，不含路径）", "defaultValue": "", "validator": {"allowBlank": false}},
+        {"key": "wizard_routes", "desc": "允许访问的内网 CIDR，多个用逗号分隔", "defaultValue": "192.168.1.0/24", "validator": {"allowBlank": false}},
+        {"key": "wizard_dns", "desc": "内网 DNS IPv4 地址", "defaultValue": "192.168.1.1", "validator": {"allowBlank": false}},
+        {"key": "wizard_pool", "desc": "VPN 地址池（避免与其他网络重叠）", "defaultValue": "10.77.0.0/24", "validator": {"allowBlank": false}},
+        {"key": "wizard_groups", "desc": "允许使用 VPN 的 DSM 用户组", "defaultValue": "users", "validator": {"allowBlank": false}}
+      ]}
+    ]
+  }
+]

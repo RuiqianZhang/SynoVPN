@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+BASE=/var/packages/SynoVPN
+BIN="$BASE/target/bin/synovpn"
+PIDFILE="$BASE/var/run/service.pid"
+is_running() {
+    [ -f "$PIDFILE" ] || return 1
+    read -r PID < "$PIDFILE"
+    case "$PID" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(readlink "/proc/$PID/exe" 2>/dev/null)" = "$(readlink -f "$BIN")" ] || return 1
+    kill -0 "$PID" 2>/dev/null
+}
+case "${1:-}" in
+start)
+    if is_running; then exit 0; fi
+    mkdir -p "$BASE/var/run" "$BASE/var/log"
+    chmod 0755 "$BASE/var/run"
+    chmod 0700 "$BASE/var/log"
+    rm -f "$BASE/var/run/web/web.sock"
+    nohup "$BIN" web --config "$BASE/etc/config.json" >> "$BASE/var/log/synovpn.log" 2>&1 &
+    PID=$!
+    printf '%s\n' "$PID" > "$PIDFILE"
+    chmod 0600 "$PIDFILE"
+    COUNT=0
+    while [ "$COUNT" -lt 60 ]; do
+        if ! kill -0 "$PID" 2>/dev/null; then break; fi
+        if is_running && [ -S "$BASE/var/run/web/web.sock" ]; then exit 0; fi
+        sleep 1
+        COUNT=$((COUNT + 1))
+    done
+    if is_running; then kill -TERM "$PID"; fi
+    printf '%s\n' 'SynoVPN is not ready. See /var/packages/SynoVPN/var/log/synovpn.log' >&2
+    exit 1
+    ;;
+stop)
+    # Recover portal children left by an earlier failed startup check. Only this
+    # package binary in web mode is selected; the package account cannot signal
+    # processes owned by other users. A deleted inode can remain across upgrade.
+    EXPECTED=$(readlink -f "$BIN")
+    for PROC in /proc/[0-9]*; do
+        EXE=$(readlink "$PROC/exe" 2>/dev/null) || continue
+        EXE=${EXE%" (deleted)"}
+        [ "$EXE" = "$EXPECTED" ] || continue
+        MODE=$(tr '\000' '\n' < "$PROC/cmdline" 2>/dev/null | sed -n '2p') || continue
+        [ "$MODE" = web ] || continue
+        kill -TERM "${PROC##*/}" 2>/dev/null || true
+    done
+    if is_running; then
+        kill -TERM "$PID"
+        COUNT=0
+        while is_running && [ "$COUNT" -lt 15 ]; do sleep 1; COUNT=$((COUNT + 1)); done
+        if is_running; then kill -KILL "$PID"; fi
+    fi
+    rm -f "$PIDFILE"
+    ;;
+status)
+    if is_running; then exit 0; fi
+    exit 3
+    ;;
+*) printf '%s\n' 'usage: start-stop-status start|stop|status' >&2; exit 1 ;;
+esac

@@ -1,0 +1,22 @@
+services:
+  synovpn-builder:
+    build:
+      context: .
+      dockerfile: tools/sa6400.Dockerfile
+    image: synovpn-builder:0.5.0-1
+    container_name: synovpn-build
+    network_mode: none
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - NET_ADMIN
+      - NET_RAW
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./dist:/workspace/dist
+    mem_limit: 2g
+    cpuset: "0,1"
+    restart: "no"

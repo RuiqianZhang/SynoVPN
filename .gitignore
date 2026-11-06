@@ -1,0 +1,10 @@
+/build/
+/dist/
+/var/
+/runtime/
+*.spk
+*.exe
+/vendor/
+*.log
+*.tmp
+.DS_Store

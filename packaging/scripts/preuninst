@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+/var/packages/SynoVPN/scripts/start-stop-status stop
+# DSM owns package data lifecycle. No system configuration or shared rules are deleted.
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+/var/packages/SynoVPN/scripts/start-stop-status stop
+exit 0

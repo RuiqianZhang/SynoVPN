@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+BASE=/var/packages/SynoVPN
+mkdir -p "$BASE/var/log"
+chmod 0700 "$BASE/var/log"
+exec >> "$BASE/var/log/install.log" 2>&1
+trap 'result=$?; printf "initialization exit=%s\n" "$result"; exit "$result"' EXIT
+printf 'Initializing SynoVPN; uid=%s; domain_set=%s; origin_set=%s\n' "$(id -u)" "${wizard_domain:+yes}" "${wizard_origin:+yes}"
+# CLI invocations must not inherit the DSM web request CGI marker.
+unset GATEWAY_INTERFACE
+mkdir -p "$BASE/etc"
+chmod 0755 "$BASE/etc"
+chmod 0700 "$BASE/var/log"
+if [ ! -f "$BASE/etc/config.json" ]; then
+    "$BASE/target/bin/synovpn" init \
+        --frontend-only \
+        --domain "${wizard_domain:?VPN domain is required}" \
+        --origin "${wizard_origin:?DSM HTTPS origin is required}" \
+        --routes "${wizard_routes:?Internal routes are required}" \
+        --dns "${wizard_dns:?DNS is required}" \
+        --groups "${wizard_groups:-users}" \
+        --pool "${wizard_pool:-10.77.0.0/24}"
+fi
+exit 0

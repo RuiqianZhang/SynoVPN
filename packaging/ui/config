@@ -1,0 +1,12 @@
+{
+  ".url": {
+    "local.synovpn.portal": {
+      "type": "url",
+      "icon": "images/icon_{0}.png",
+      "title": "SynoVPN",
+      "desc": "管理自己的 VPN 设备配置",
+      "url": "/webman/3rdparty/SynoVPN/app.cgi",
+      "allUsers": true
+    }
+  }
+}
