@@ -20,8 +20,8 @@ const enrollmentLifetime = 5 * time.Minute
 // A phone receives a short-lived capability for exactly one existing device.
 // Only its digest is retained. Restart, cancellation and revocation invalidate it.
 type enrollment struct {
-	Owner, Device string
-	Expires       time.Time
+	Owner, Device, Origin string
+	Expires               time.Time
 }
 
 func (a *App) clearEnrollments(owner, device string) {
@@ -61,7 +61,15 @@ func (a *App) enroll(w http.ResponseWriter, r *http.Request, u auth.User, id str
 	if a.Demo {
 		path = "/"
 	}
-	link := a.C.Origin + path + "#enroll=" + token
+	origin := auth.RequestOrigin(r)
+	if origin == "" {
+		origin = a.C.Origin
+	}
+	if !a.Demo && !strings.HasPrefix(origin, "https://") {
+		fail(w, 400, "请通过 NAS 的 HTTPS 地址领取配置")
+		return
+	}
+	link := origin + path + "#enroll=" + token
 	png, err := qrcode.Encode(link, qrcode.Medium, 280)
 	if err != nil {
 		fail(w, 500, "生成二维码失败")
@@ -72,7 +80,7 @@ func (a *App) enroll(w http.ResponseWriter, r *http.Request, u auth.User, id str
 		return
 	}
 	expires := time.Now().Add(enrollmentLifetime)
-	a.enrollments[sha256.Sum256([]byte(token))] = enrollment{u.ID, id, expires}
+	a.enrollments[sha256.Sum256([]byte(token))] = enrollment{Owner: u.ID, Device: id, Origin: origin, Expires: expires}
 	reply(w, 201, map[string]any{"qr": "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), "url": link, "expires": expires.Unix()})
 }
 
@@ -102,10 +110,6 @@ func (a *App) claimEnrollment(w http.ResponseWriter, r *http.Request) {
 		enrollmentError(w, 405, "请扫描二维码后点击领取按钮。")
 		return
 	}
-	if r.Header.Get("Origin") != a.C.Origin {
-		enrollmentError(w, 403, "领取页面来源不符，请重新扫码。")
-		return
-	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/x-www-form-urlencoded" {
 		enrollmentError(w, 415, "领取请求格式不正确。")
@@ -124,6 +128,10 @@ func (a *App) claimEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	key := sha256.Sum256([]byte(token))
 	grant, ok := a.enrollments[key]
+	if ok && (grant.Origin == "" || r.Header.Get("Origin") != grant.Origin) {
+		enrollmentError(w, 403, "领取页面来源不符，请重新扫码。")
+		return
+	}
 	// Consume before reading the private key, under the request-wide mutex.
 	delete(a.enrollments, key)
 	if !ok || !time.Now().Before(grant.Expires) {

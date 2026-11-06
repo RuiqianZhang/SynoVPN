@@ -162,7 +162,13 @@ func TestWindowsAndAndroidBundlesHaveCertificatesNotLoginCredentials(t *testing.
 			t.Fatal("device P12 mismatch")
 		}
 		if platform == "windows" {
+			if !bytes.Contains(files["install-windows.cmd"], []byte("-File \"%~dp0setup-windows.ps1\"")) {
+				t.Fatal("double-click launcher missing from Windows bundle")
+			}
 			s := string(files["setup-windows.ps1"])
+			if !strings.Contains(s, "-Verb RunAs") || !strings.Contains(s, "-EncodedCommand") || strings.Contains(s, "#Requires -RunAsAdministrator") {
+				t.Fatal("Windows setup cannot request elevation")
+			}
 			if !strings.Contains(s, "-AuthenticationMethod MachineCertificate") || strings.Contains(s, "-AuthenticationMethod Eap") {
 				t.Fatal("wrong Windows authentication")
 			}

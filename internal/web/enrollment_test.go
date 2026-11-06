@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,9 @@ func TestAndroidEnrollmentReturnsItsBoundProfile(t *testing.T) {
 	w = claim(a, token, a.C.Origin)
 	if w.Code != 200 {
 		t.Fatal("android claim failed")
+	}
+	if w.Header().Get("Content-Length") != strconv.Itoa(w.Body.Len()) {
+		t.Fatal("download length does not match ZIP body")
 	}
 	z, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
 	if err != nil {
@@ -238,5 +242,63 @@ func TestEnrollmentPagePreservesSameOriginFormOrigin(t *testing.T) {
 	w := req(a, "GET", "/", "", "")
 	if w.Header().Get("Referrer-Policy") != "same-origin" {
 		t.Fatal("native form Origin would be suppressed")
+	}
+}
+
+func TestLANEnrollmentUsesNASAddressButKeepsVPNDomain(t *testing.T) {
+	for _, platform := range []string{"ios", "android"} {
+		a, _ := app(t)
+		w := req(a, "POST", "/api/devices", "alice", `{"name":"LAN phone","platform":"`+platform+`"}`)
+		var d store.Device
+		json.Unmarshal(w.Body.Bytes(), &d)
+		host := "192.168.10.10:5001"
+		origin := "https://" + host
+		w = portalReq(a, "GET", "/api/me", host, "", "", "alice", "")
+		var me struct {
+			CSRF string `json:"csrf"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &me)
+		w = portalReq(a, "POST", "/api/devices/"+d.ID+"/enroll", host, origin, me.CSRF, "alice", "{}")
+		var out struct {
+			URL string `json:"url"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		if w.Code != 201 || !strings.HasPrefix(out.URL, origin+"/") {
+			t.Fatalf("LAN URL missing: %d", w.Code)
+		}
+		u, _ := url.Parse(out.URL)
+		token := strings.TrimPrefix(u.Fragment, "enroll=")
+		if claim(a, token, a.C.Origin).Code != 403 {
+			t.Fatal("grant crossed origins")
+		}
+		w = claim(a, token, origin)
+		if w.Code != 200 {
+			t.Fatalf("LAN claim failed: %d", w.Code)
+		}
+		if platform == "ios" {
+			if !strings.Contains(w.Body.String(), "<string>"+a.C.Domain+"</string>") {
+				t.Fatal("VPN domain changed")
+			}
+		} else {
+			z, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, f := range z.File {
+				if f.Name == "certificate.json" {
+					r, _ := f.Open()
+					var m struct {
+						Server string `json:"server"`
+					}
+					json.NewDecoder(r).Decode(&m)
+					r.Close()
+					found = m.Server == a.C.Domain
+				}
+			}
+			if !found {
+				t.Fatal("Android VPN domain changed")
+			}
+		}
 	}
 }

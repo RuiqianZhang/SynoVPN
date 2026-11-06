@@ -21,7 +21,7 @@ func portalReq(a *App, method, path, host, origin, csrf, cookie, body string) *h
 	a.Handler().ServeHTTP(w, r)
 	return w
 }
-func TestLANPortalDeviceLifecycleAndPublicQR(t *testing.T) {
+func TestLANPortalDeviceLifecycleAndLANQR(t *testing.T) {
 	a, _ := app(t)
 	host := "192.168.10.10:5001"
 	origin := "https://" + host
@@ -48,8 +48,8 @@ func TestLANPortalDeviceLifecycleAndPublicQR(t *testing.T) {
 				URL string `json:"url"`
 			}
 			json.Unmarshal(w.Body.Bytes(), &result)
-			if !strings.HasPrefix(result.URL, a.C.Origin+"/") {
-				t.Fatal("LAN changed public QR origin")
+			if !strings.HasPrefix(result.URL, origin+"/") {
+				t.Fatal("LAN enrollment did not use its portal origin")
 			}
 		}
 	}

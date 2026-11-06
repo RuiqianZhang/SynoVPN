@@ -32,8 +32,12 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u auth.User) {
 	const prefix = "/api/admin/devices/"
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, prefix) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
-		if len(parts) == 2 && engine.IDPattern.MatchString(parts[0]) && parts[1] == "revoke" {
-			a.adminRevoke(w, r, u, parts[0])
+		if len(parts) == 2 && engine.IDPattern.MatchString(parts[0]) && (parts[1] == "revoke" || parts[1] == "delete") {
+			if parts[1] == "delete" {
+				a.deleteRecord(w, r, u, parts[0], true)
+			} else {
+				a.adminRevoke(w, r, u, parts[0])
+			}
 			return
 		}
 	}
@@ -83,4 +87,35 @@ func (a *App) adminRevoke(w http.ResponseWriter, r *http.Request, u auth.User, i
 		code = 202
 	}
 	reply(w, code, adminDevice{d, ownerName(d.Owner)})
+}
+
+func (a *App) deleteRecord(w http.ResponseWriter, r *http.Request, u auth.User, id string, admin bool) {
+	owner := u.ID
+	if admin {
+		d, err := a.DB.Metadata(id)
+		if err != nil {
+			fail(w, 404, "设备不存在")
+			return
+		}
+		owner = d.Owner
+	}
+	err := a.DB.Archive(owner, id, u.ID, admin)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			fail(w, 404, "设备不存在")
+		case errors.Is(err, store.ErrNotRevoked):
+			fail(w, 409, "请先解绑，等待证书撤销完成后再删除记录")
+		default:
+			fail(w, 500, "删除记录失败")
+		}
+		return
+	}
+	a.clearEnrollments(owner, id)
+	for token, t := range a.tickets {
+		if t.Device == id {
+			delete(a.tickets, token)
+		}
+	}
+	reply(w, 200, map[string]bool{"deleted": true})
 }

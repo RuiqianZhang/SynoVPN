@@ -92,3 +92,34 @@ func TestRevocationIntentSurvivesReopeningDatabase(t *testing.T) {
 		t.Fatal("pending revocation lost on restart")
 	}
 }
+
+func TestArchivePersistsAndRetainsOwnerAudit(t *testing.T) {
+	dir := t.TempDir()
+	s, e := Open(dir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	d := Device{ID: "archived", Owner: "user", Name: "old", Platform: "ios", Expires: time.Now().Add(time.Hour).Unix()}
+	if e = s.Create(d, 5); e != nil {
+		t.Fatal(e)
+	}
+	s.Revoke("user", d.ID)
+	s.FinishRevoke(d.ID)
+	if e = s.Archive("user", d.ID, "manager", true); e != nil {
+		t.Fatal(e)
+	}
+	s.DB.Close()
+	s, e = Open(dir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.DB.Close()
+	rows, e := s.List("user")
+	if e != nil || len(rows) != 0 {
+		t.Fatal("archive not persisted")
+	}
+	var owner string
+	if e = s.DB.QueryRow("SELECT d.owner FROM audit a JOIN devices d ON a.device=d.id WHERE a.action='admin-delete-record' AND a.actor='manager'").Scan(&owner); e != nil || owner != "user" {
+		t.Fatal("owner audit lost")
+	}
+}

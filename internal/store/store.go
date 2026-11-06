@@ -27,6 +27,7 @@ type Device struct {
 type Store struct{ DB *sql.DB }
 
 var ErrQuota = errors.New("device quota reached")
+var ErrNotRevoked = errors.New("device is not fully revoked")
 var ErrNotFound = errors.New("device not found")
 
 func Open(dir string) (*Store, error) {
@@ -74,7 +75,7 @@ func Open(dir string) (*Store, error) {
  UPDATE devices SET state='revoking',applied=0,private_key=NULL,error='旧版口令配置已停用，请重新创建设备证书' WHERE state!='revoked';`)
 	}
 	if e == nil {
-		_, e = tx.Exec("PRAGMA user_version=2")
+		_, e = tx.Exec(`CREATE TABLE IF NOT EXISTS device_archive(device TEXT PRIMARY KEY REFERENCES devices(id),at INTEGER NOT NULL); PRAGMA user_version=2;`)
 	}
 	if e != nil {
 		tx.Rollback()
@@ -98,10 +99,10 @@ func scan(s scanner) (Device, error) {
 	return d, e
 }
 func (s *Store) List(owner string) ([]Device, error) {
-	q := "SELECT " + fields + " FROM devices"
+	q := "SELECT " + fields + " FROM devices WHERE id NOT IN (SELECT device FROM device_archive)"
 	args := []any{}
 	if owner != "" {
-		q += " WHERE owner=?"
+		q += " AND owner=?"
 		args = append(args, owner)
 	}
 	q += " ORDER BY created DESC,id"
@@ -121,7 +122,7 @@ func (s *Store) List(owner string) ([]Device, error) {
 	return out, rows.Err()
 }
 func (s *Store) Get(owner, id string) (Device, error) {
-	d, e := scan(s.DB.QueryRow("SELECT "+fields+" FROM devices WHERE owner=? AND id=?", owner, id))
+	d, e := scan(s.DB.QueryRow("SELECT "+fields+" FROM devices WHERE owner=? AND id=? AND id NOT IN (SELECT device FROM device_archive)", owner, id))
 	if errors.Is(e, sql.ErrNoRows) {
 		e = ErrNotFound
 	}
@@ -210,4 +211,36 @@ func (s *Store) SetCertificate(id string, cert []byte, serial string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Archive hides only completed revocations. Device and audit rows remain durable.
+func (s *Store) Archive(owner, id, actor string, admin bool) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var state string
+	var applied bool
+	err = tx.QueryRow("SELECT state,applied FROM devices WHERE owner=? AND id=? AND id NOT IN (SELECT device FROM device_archive)", owner, id).Scan(&state, &applied)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if state != "revoked" || !applied {
+		return ErrNotRevoked
+	}
+	if _, err = tx.Exec("INSERT INTO device_archive(device,at) VALUES(?,?)", id, time.Now().Unix()); err != nil {
+		return err
+	}
+	action := "delete-record"
+	if admin {
+		action = "admin-delete-record"
+	}
+	if _, err = tx.Exec("INSERT INTO audit(at,actor,action,device) VALUES(?,?,?,?)", time.Now().Unix(), actor, action, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

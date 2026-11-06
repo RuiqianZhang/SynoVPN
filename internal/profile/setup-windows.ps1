@@ -1,4 +1,23 @@
-#Requires -RunAsAdministrator
+param([switch]$Launched)
+$ErrorActionPreference = 'Stop'
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    try {
+        # Encode the entire command so spaces, apostrophes and shell characters
+        # in a download directory cannot become executable command text.
+        $literalPath = $PSCommandPath.Replace("'", "''")
+        $command = "& '$literalPath' -Launched"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $hostPath = Join-Path $PSHOME 'powershell.exe'
+        $child = Start-Process -FilePath $hostPath -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -Wait -PassThru
+        exit $child.ExitCode
+    } catch {
+        Write-Host ('Administrator authorization was canceled or failed: ' + $_.Exception.Message) -ForegroundColor Red
+        exit 1
+    }
+}
+try {
 $ErrorActionPreference = 'Stop'
 $cfg = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'certificate.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $serverCAPath = Join-Path $PSScriptRoot 'SynoVPN-Server-CA.cer'
@@ -23,3 +42,10 @@ Set-VpnConnectionIPsecConfiguration -ConnectionName $cfg.name -AllUserConnection
 foreach ($route in $cfg.routes) { Add-VpnConnectionRoute -ConnectionName $cfg.name -DestinationPrefix $route -AllUserConnection | Out-Null }
 Write-Host 'Certificate VPN installed. Connect from Windows VPN settings. No VPN username or password is required.'
 Start-Process 'ms-settings:network-vpn'
+
+} catch {
+    Write-Host ('VPN setup failed: ' + $_.Exception.Message) -ForegroundColor Red
+    exit 1
+} finally {
+    if ($Launched) { [void](Read-Host 'Press Enter to close this window') }
+}

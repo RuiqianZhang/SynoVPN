@@ -108,6 +108,8 @@ func (a *App) Handler() http.Handler {
 				a.enroll(w, r, u, parts[0])
 			case "enroll-cancel":
 				a.cancelEnrollment(w, r, u, parts[0])
+			case "delete":
+				a.deleteRecord(w, r, u, parts[0], false)
 			case "revoke":
 				a.revoke(w, r, u, parts[0])
 			case "export":
@@ -301,6 +303,7 @@ func (a *App) deviceProfile(owner, id string) (profile.File, int, error) {
 
 func writeProfile(w http.ResponseWriter, f profile.File) {
 	w.Header().Set("Content-Type", f.Type)
+	w.Header().Set("Content-Length", fmt.Sprint(len(f.Data)))
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, f.Name))
 	w.Write(f.Data)
 }

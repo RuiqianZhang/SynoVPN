@@ -8,7 +8,7 @@ import "errors"
 const metadataFields = "id,owner,name,platform,state,created,expires,applied,error,NULL,NULL,serial"
 
 func (s *Store) AllMetadata() ([]Device, error) {
-	rows, err := s.DB.Query("SELECT " + metadataFields + " FROM devices ORDER BY created DESC,id")
+	rows, err := s.DB.Query("SELECT " + metadataFields + " FROM devices WHERE id NOT IN (SELECT device FROM device_archive) ORDER BY created DESC,id")
 	if err != nil {
 		return nil, err
 	}
@@ -24,7 +24,7 @@ func (s *Store) AllMetadata() ([]Device, error) {
 	return out, rows.Err()
 }
 func (s *Store) Metadata(id string) (Device, error) {
-	d, err := scan(s.DB.QueryRow("SELECT "+metadataFields+" FROM devices WHERE id=?", id))
+	d, err := scan(s.DB.QueryRow("SELECT "+metadataFields+" FROM devices WHERE id=? AND id NOT IN (SELECT device FROM device_archive)", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
