@@ -17,7 +17,7 @@ function setup(agent, fetch) {
   static revokeObjectURL(url){revoked.push(url)}
  }
  const ctx={URL:LocalURL,URLSearchParams,AbortController,TypeError,Error,console,
-  navigator:{userAgent:agent},location:{href:'https://192.168.10.10:5001/webman/3rdparty/SynoVPN/app.cgi#enroll=phone-token'},
+  navigator:{userAgent:agent},location:{origin:'https://192.168.10.10:5001',host:'192.168.10.10:5001',href:'https://192.168.10.10:5001/webman/3rdparty/SynoVPN/app.cgi#enroll=phone-token'},
   history:{replaceState(){}},window:{addEventListener:(name,fn)=>events[name]=fn},
   document:{getElementById:element,querySelector:()=>element('header')},fetch,
   setTimeout(fn,ms){const id=++serial;timers.set(id,{fn,ms});return id},clearTimeout:id=>timers.delete(id)};

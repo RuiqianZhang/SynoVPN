@@ -125,7 +125,7 @@ def main():
         for name,content in notices.items():add(tar,'licenses/go/'+name,content)
     info=f'''package="SynoVPN"
 displayname="SynoVPN"
-version="0.5.0-5"
+version="0.5.0-7"
 description="DSM session authenticated per-user certificate IKEv2 device portal. Preview release: NAS validation required."
 arch="{metadata}"
 os_min_ver="{min_dsm}"
@@ -141,7 +141,7 @@ silent_upgrade="yes"
 silent_uninstall="no"
 '''
     tag=f'{args.target}-{metadata}' if args.target else args.arch
-    dist=ROOT/'dist';dist.mkdir(exist_ok=True);spk=dist/f'SynoVPN-0.5.0-5-{tag}.spk'
+    dist=ROOT/'dist';dist.mkdir(exist_ok=True);spk=dist/f'SynoVPN-0.5.0-7-{tag}.spk'
     with tarfile.open(spk,'w',format=tarfile.USTAR_FORMAT) as tar:
         add(tar,'INFO',info.encode());add(tar,'package.tgz',data.getvalue())
         add(tar,'PACKAGE_ICON.PNG',png(64));add(tar,'PACKAGE_ICON_256.PNG',png(256))

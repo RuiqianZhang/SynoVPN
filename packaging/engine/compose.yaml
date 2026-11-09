@@ -1,7 +1,7 @@
 services:
   vpn:
     build: .
-    image: synovpn-engine:0.5.0-5
+    image: synovpn-engine:0.5.0-7
     container_name: synovpn-engine
     user: "0:0"
     network_mode: host
