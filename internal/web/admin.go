@@ -12,6 +12,7 @@ import (
 type adminDevice struct {
 	store.Device
 	OwnerName string `json:"owner"`
+	OwnerID   string `json:"owner_id"`
 }
 
 func ownerName(owner string) string {
@@ -25,6 +26,18 @@ func ownerName(owner string) string {
 	return owner
 }
 func (a *App) admin(w http.ResponseWriter, r *http.Request, u auth.User) {
+	if r.URL.Path == "/api/admin/policy-users" {
+		a.adminPolicyUsers(w, r)
+		return
+	}
+	if r.URL.Path == "/api/admin/user-routes" {
+		a.adminUserRoutes(w, r, u)
+		return
+	}
+	if r.URL.Path == "/api/admin/public-routes" {
+		a.adminPublicRoutes(w, r, u)
+		return
+	}
 	if r.Method == "GET" && r.URL.Path == "/api/admin/devices" {
 		a.adminList(w, r)
 		return
@@ -56,7 +69,7 @@ func (a *App) adminList(w http.ResponseWriter, r *http.Request) {
 	out := make([]adminDevice, 0, len(devices))
 	for _, d := range devices {
 		d.Online = status.Ready && status.Online[d.ID]
-		out = append(out, adminDevice{d, ownerName(d.Owner)})
+		out = append(out, adminDevice{d, ownerName(d.Owner), d.Owner})
 	}
 	reply(w, 200, map[string]any{"devices": out, "gateway": status.Ready, "gateway_error": status.Error})
 }
@@ -86,7 +99,7 @@ func (a *App) adminRevoke(w http.ResponseWriter, r *http.Request, u auth.User, i
 	if d.State != "revoked" {
 		code = 202
 	}
-	reply(w, code, adminDevice{d, ownerName(d.Owner)})
+	reply(w, code, adminDevice{d, ownerName(d.Owner), d.Owner})
 }
 
 func (a *App) deleteRecord(w http.ResponseWriter, r *http.Request, u auth.User, id string, admin bool) {

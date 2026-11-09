@@ -22,6 +22,7 @@ type Config struct {
 	Origin           string   `json:"origin"`
 	Pool             string   `json:"pool"`
 	Routes           []string `json:"routes"`
+	PublicRoutes     []string `json:"public_routes,omitempty"`
 	DNS              []string `json:"dns"`
 	AllowedGroups    []string `json:"allowed_groups"`
 	MaxDevices       int      `json:"max_devices"`
@@ -59,14 +60,17 @@ func (c Config) Validate() error {
 	if e != nil || !p.Addr().Is4() || p.Bits() < 16 || p.Bits() > 29 || p != p.Masked() || !p.Addr().IsPrivate() {
 		return errors.New("pool must be an aligned private IPv4 /16 through /29")
 	}
-	if len(c.Routes) == 0 || len(c.Routes) > 16 {
-		return errors.New("one to sixteen internal routes required")
+	if len(c.Routes) == 0 {
+		return errors.New("at least one internal route required")
 	}
 	for _, s := range c.Routes {
 		r, e := netip.ParsePrefix(s)
 		if e != nil || !r.Addr().Is4() || !r.Addr().IsPrivate() || r != r.Masked() || r.Overlaps(p) || r.Bits() < 8 {
 			return errors.New("routes must be aligned private IPv4 subnets outside the VPN pool")
 		}
+	}
+	if _, err := NormalizePublicRoutes(c.PublicRoutes); err != nil {
+		return err
 	}
 	if len(c.DNS) == 0 || len(c.DNS) > 3 {
 		return errors.New("one to three DNS addresses required")

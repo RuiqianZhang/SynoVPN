@@ -231,9 +231,21 @@ func (a *Authority) Issue(req IssueRequest) (Issued, error) {
 	return issued, nil
 }
 func (a *Authority) Reconcile(active []ActiveCertificate) ([]byte, error) {
+	return a.ReconcilePending(active, nil)
+}
+
+// Pending IDs retain issuance ledger entries without granting a usable session.
+// This permits retry after a lost issuance response or failed Web DB commit.
+func (a *Authority) ReconcilePending(active []ActiveCertificate, pending []string) ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	want := map[string]bool{}
+	for _, id := range pending {
+		if !IDPattern.MatchString(id) {
+			return nil, errors.New("invalid pending identity")
+		}
+		want[id] = true
+	}
 	for _, d := range active {
 		r, ok := a.state.Devices[d.ID]
 		if !ok || r.Revoked != 0 || r.Expires != d.Expires || !bytes.Equal(r.Certificate, d.Certificate) {

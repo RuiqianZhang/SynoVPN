@@ -8,15 +8,18 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"synovpn/internal/config"
 	"synovpn/internal/pki"
 	"time"
 )
 
 type Device struct {
-	ID          string `json:"id"`
-	Certificate []byte `json:"certificate,omitempty"`
-	Active      bool   `json:"active"`
-	Expires     int64  `json:"expires"`
+	ID          string   `json:"id"`
+	Certificate []byte   `json:"certificate,omitempty"`
+	Active      bool     `json:"active"`
+	Expires     int64    `json:"expires"`
+	Routes      []string `json:"routes"`
+	Pending     bool     `json:"pending,omitempty"`
 }
 type Status struct {
 	Ready   bool            `json:"ready"`
@@ -43,7 +46,15 @@ func Validate(ds []Device) error {
 			return errors.New("invalid or duplicate device identity")
 		}
 		seen[d.ID] = true
-		if d.Active && (len(d.Certificate) == 0 || len(d.Certificate) > 8192 || d.Expires <= time.Now().Unix() || d.Expires > time.Now().Add(366*24*time.Hour).Unix()) {
+		if d.Routes != nil {
+			if _, err := config.NormalizeAccessRoutes(d.Routes); err != nil {
+				return err
+			}
+		}
+		if d.Pending && (!d.Active || len(d.Certificate) > 0) {
+			return errors.New("invalid pending device")
+		}
+		if d.Active && ((!d.Pending && len(d.Certificate) == 0) || len(d.Certificate) > 8192 || d.Expires <= time.Now().Unix() || d.Expires > time.Now().Add(366*24*time.Hour).Unix()) {
 			return errors.New("invalid device credential")
 		}
 	}
@@ -142,12 +153,17 @@ func (d *Demo) Sync(ctx context.Context, ds []Device) (Status, error) {
 	defer d.mu.Unlock()
 	d.devices = map[string]bool{}
 	active := []pki.ActiveCertificate{}
+	pending := []string{}
 	for _, v := range ds {
+		if v.Pending {
+			pending = append(pending, v.ID)
+			continue
+		}
 		if v.Active {
 			active = append(active, pki.ActiveCertificate{ID: v.ID, Certificate: v.Certificate, Expires: v.Expires})
 		}
 	}
-	if _, e := d.Authority.Reconcile(active); e != nil {
+	if _, e := d.Authority.ReconcilePending(active, pending); e != nil {
 		return Status{}, e
 	}
 	applied := map[string]bool{}

@@ -39,6 +39,7 @@ type App struct {
 	tickets     map[string]ticket
 	enrollments map[[32]byte]enrollment
 	last        engine.Status
+	routeError  string
 }
 
 func New(c config.Config, db *store.Store, key []byte, a auth.Authenticator, e engine.Engine, demo bool) *App {
@@ -67,6 +68,10 @@ func (a *App) Handler() http.Handler {
 			fail(w, 401, e.Error())
 			return
 		}
+		if e := a.DB.RememberUser(u.ID, u.Name); e != nil {
+			fail(w, 503, "保存用户身份失败")
+			return
+		}
 		if r.Method != "GET" && r.Method != "POST" {
 			fail(w, 405, "不支持的操作")
 			return
@@ -76,7 +81,9 @@ func (a *App) Handler() http.Handler {
 				fail(w, 403, "页面会话已改变，请刷新后重试")
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 8192)
+			if r.URL.Path != "/api/admin/public-routes" && r.URL.Path != "/api/admin/user-routes" {
+				r.Body = http.MaxBytesReader(w, r.Body, 8192)
+			}
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -90,7 +97,7 @@ func (a *App) Handler() http.Handler {
 		case r.Method == "GET" && r.URL.Path == "/":
 			a.page(w)
 		case r.Method == "GET" && r.URL.Path == "/api/me":
-			reply(w, 200, map[string]any{"user": u.Name, "is_admin": u.Admin, "csrf": a.portalCSRF(r, u.ID), "domain": a.C.Domain, "routes": a.C.Routes, "max_devices": a.C.MaxDevices, "device_days": a.C.DeviceDays, "demo": a.Demo, "authentication": "certificate"})
+			reply(w, 200, map[string]any{"user": u.Name, "is_admin": u.Admin, "csrf": a.portalCSRF(r, u.ID), "domain": a.C.Domain, "routes": a.effectiveRoutes(u.ID), "max_devices": a.C.MaxDevices, "device_days": a.C.DeviceDays, "demo": a.Demo, "authentication": "certificate"})
 		case r.Method == "GET" && r.URL.Path == "/api/devices":
 			a.list(w, r, u)
 		case r.Method == "POST" && r.URL.Path == "/api/devices":
@@ -294,7 +301,27 @@ func (a *App) deviceProfile(owner, id string) (profile.File, int, error) {
 	if e != nil {
 		return profile.File{}, 503, errors.New("客户端签发证书尚未就绪")
 	}
-	f, e := profile.Generate(a.C, d, []byte(key), ca, clientCA)
+	c := a.C
+	routes, err := a.DB.PublicRoutes()
+	if err != nil {
+		return profile.File{}, 503, errors.New("读取公网出口规则失败")
+	}
+	c.PublicRoutes = routes
+	effective, custom, policyErr := a.DB.UserRoutes(owner)
+	if policyErr != nil {
+		return profile.File{}, 503, errors.New("读取用户访问规则失败")
+	}
+	if custom {
+		c.Routes = effective
+		c.PublicRoutes = nil
+	}
+	if len(c.TrafficRoutes()) == 0 {
+		return profile.File{}, 403, errors.New("管理员尚未允许此用户访问任何目标")
+	}
+	if a.routeError != "" {
+		return profile.File{}, 503, errors.New(a.routeError)
+	}
+	f, e := profile.Generate(c, d, []byte(key), ca, clientCA)
 	if e != nil {
 		return profile.File{}, 500, errors.New("生成设备配置失败")
 	}
@@ -329,45 +356,65 @@ func (a *App) sync(ctx context.Context) {
 			}
 		}
 	}
+	a.applyPublicRoutes(ctx)
 	all, e = a.DB.List("")
 	if e != nil {
 		a.last = engine.Status{}
 		return
 	}
 	ds := []engine.Device{}
+	pending := map[string]bool{}
 	for _, d := range all {
 		if d.State == "revoked" {
 			continue
 		}
-		v := engine.Device{ID: d.ID, Active: d.State == "active", Expires: d.Expires}
+		routes, custom, err := a.DB.UserRoutes(d.Owner)
+		if err != nil {
+			a.last = engine.Status{}
+			return
+		}
+		if !custom {
+			routes = a.C.TrafficRoutes()
+		}
+		v := engine.Device{ID: d.ID, Active: d.State == "active", Expires: d.Expires, Routes: routes}
 		if v.Active {
 			if len(d.Certificate) == 0 {
 				key, err := secure.Open(a.Key, d.PrivateKey, d.ID)
 				if err != nil {
 					a.DB.Mark(d.ID, false, "设备密钥无法读取")
-					a.last = engine.Status{}
-					return
+					pending[d.ID] = true
+					v.Pending = true
+					ds = append(ds, v)
+					continue
 				}
 				csr, err := pki.CSR(d.ID, []byte(key))
 				if err != nil {
 					a.DB.Mark(d.ID, false, "设备密钥无效")
-					a.last = engine.Status{}
-					return
+					pending[d.ID] = true
+					v.Pending = true
+					ds = append(ds, v)
+					continue
 				}
 				issued, err := a.Engine.Issue(ctx, pki.IssueRequest{ID: d.ID, CSR: csr, Expires: d.Expires})
 				if err != nil {
 					a.DB.Mark(d.ID, false, "等待证书签发，系统将自动重试")
-					a.last = engine.Status{}
-					return
+					pending[d.ID] = true
+					v.Pending = true
+					ds = append(ds, v)
+					continue
 				}
 				if issued.Expires != d.Expires {
 					a.DB.Mark(d.ID, false, "证书有效期不匹配")
-					a.last = engine.Status{}
-					return
+					pending[d.ID] = true
+					v.Pending = true
+					ds = append(ds, v)
+					continue
 				}
 				if err = a.DB.SetCertificate(d.ID, issued.Certificate, issued.Serial); err != nil {
-					a.last = engine.Status{}
-					return
+					pending[d.ID] = true
+					v.Pending = true
+					ds = append(ds, v)
+					continue
 				}
 				d.Certificate = issued.Certificate
 			}
@@ -378,7 +425,7 @@ func (a *App) sync(ctx context.Context) {
 	s, e := a.Engine.Sync(ctx, ds)
 	a.last = s
 	for _, d := range all {
-		if d.State == "revoked" {
+		if d.State == "revoked" || pending[d.ID] {
 			continue
 		}
 		if e != nil {

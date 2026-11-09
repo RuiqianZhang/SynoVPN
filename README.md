@@ -30,6 +30,8 @@ Windows 配置 ZIP 新增 install-windows.cmd。解压后双击、确认 UAC，�
 
 当前版本 **0.5.0-5**，已在 **SA6400 / DSM 7.4.1-90080 Update 1 / epyc7002** 安装运行。iPhone 移动数据连接和用户主动解绑已验证；管理员身份、全局设备列表及搜索筛选已实机验证。跨用户管理员解绑、不同客户端系统等验证边界见 [VALIDATION.md](VALIDATION.md)。这是开发预览版。
 
+源码中的未发布功能支持管理员按 DSM 用户设置内网、公网 IPv4 / CIDR 允许列表，不设固定规则条数上限；自定义规则覆盖默认规则，空列表拒绝访问。尚未构建部署新版本，使用方式与验证边界见 [docs/USAGE.md](docs/USAGE.md) 和 [VALIDATION.md](VALIDATION.md)。
+
 ## 开始使用
 
 - [构建与 SPK 打包](docs/BUILD.md)：Windows 快速打包、Docker 完整重编、NAS Container Manager 构建。

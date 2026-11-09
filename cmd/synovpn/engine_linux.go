@@ -119,6 +119,17 @@ func runContainerEngine(parent context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if raw, e := os.ReadFile(filepath.Join(c.PKIDir, "public-routes.json")); e == nil {
+		if e = json.Unmarshal(raw, &c.PublicRoutes); e != nil {
+			return e
+		}
+		c.PublicRoutes, e = config.NormalizePublicRoutes(c.PublicRoutes)
+		if e != nil {
+			return e
+		}
+	} else if !os.IsNotExist(e) {
+		return e
+	}
 	if err = network.Preflight(c); err != nil {
 		return err
 	}
@@ -175,14 +186,26 @@ func runContainerEngine(parent context.Context, args []string) error {
 	if err = os.Chmod(c.VICI, 0600); err != nil {
 		return err
 	}
-	gateway := &engine.Gateway{C: c, Control: control, Authority: authority}
+	routeFailure := make(chan error, 1)
+	gateway := &engine.Gateway{C: c, Control: control, Authority: authority,
+		ApplyRouteFirewall: func(next config.Config) error { return (network.Firewall{Config: next}).Update() },
+		ApplyDeviceFirewall: func(next config.Config, devices []engine.Device) error {
+			return (network.Firewall{Config: next, Devices: devices}).Update()
+		},
+		OnRouteFailure: func(e error) {
+			select {
+			case routeFailure <- e:
+			default:
+			}
+		},
+	}
 	initCtx, stop := context.WithTimeout(ctx, 30*time.Second)
 	err = gateway.Initialize(initCtx)
 	stop()
 	if err != nil {
 		return err
 	}
-	firewall := network.Firewall{Config: c}
+	firewall := network.Firewall{Config: c, Devices: []engine.Device{}}
 	if err = firewall.Start(); err != nil {
 		firewall.Stop()
 		return err
@@ -216,6 +239,8 @@ func runContainerEngine(parent context.Context, args []string) error {
 		}
 		return err
 	case err = <-failure:
+		return err
+	case err = <-routeFailure:
 		return err
 	}
 }

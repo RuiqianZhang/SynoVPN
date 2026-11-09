@@ -112,12 +112,13 @@ func Generate(c config.Config, d store.Device, keyDER, serverCA, clientCA []byte
 		b.WriteString("</plist>")
 		return File{"SynoVPN-" + d.ID + ".mobileconfig", "application/x-apple-aspen-config", b.Bytes()}, nil
 	}
-	metadata, _ := json.MarshalIndent(map[string]any{"name": "SynoVPN-" + d.ID, "server": c.Domain, "device_id": d.ID, "local_identifier": pki.DNSIdentity(d.ID), "certificate_serial": d.Serial, "certificate_import_password": importPassword, "routes": c.Routes, "dns": c.DNS}, "", "  ")
-	instructions := "设备：" + d.Name + "\r\n使用设备证书连接，无需 VPN 用户名或密码。配置含私钥，请勿分享，安装后删除下载副本。\r\n\r\nWindows：解压后双击 install-windows.cmd，点击 UAC 管理员授权，核对两个 CA 的指纹并确认安装。脚本创建机器证书认证的 IKEv2 配置；之后直接从系统 VPN 连接。相同 NAS 签发的其他有效设备证书已存在时，脚本会停止，需先解绑并手动移除旧证书，避免选错身份。\r\n\r\nAndroid：先从安全设置导入 SynoVPN-Device.p12，导入用途选择 VPN/应用；导入密码见 certificate.json 的 certificate_import_password。这仅用于首次证书导入，并非 VPN 登录密码。另安装 SynoVPN-Server-CA.cer。添加 IKEv2/IPSec RSA，选择导入的客户端证书及服务器 CA；服务器/远程标识填 " + c.Domain + "，本地标识填 " + pki.DNSIdentity(d.ID) + "。不同版本和厂商支持不同，若无该选项不能保证免装客户端。\r\n\r\n解绑会撤销该证书、阻止重连并断开现有连接。证书可被复制，不能视为硬件锁定。仅内网分流，不接管互联网和 IPv6。\r\n"
+	metadata, _ := json.MarshalIndent(map[string]any{"name": "SynoVPN-" + d.ID, "server": c.Domain, "device_id": d.ID, "local_identifier": pki.DNSIdentity(d.ID), "certificate_serial": d.Serial, "certificate_import_password": importPassword, "routes": c.TrafficRoutes(), "dns": c.DNS}, "", "  ")
+	instructions := "设备：" + d.Name + "\r\n使用设备证书连接，无需 VPN 用户名或密码。配置含私钥，请勿分享，安装后删除下载副本。\r\n\r\nWindows：解压后双击 install-windows.cmd，点击 UAC 管理员授权，核对两个 CA 的指纹并确认安装。脚本创建机器证书认证的 IKEv2 配置；之后直接从系统 VPN 连接。相同 NAS 签发的其他有效设备证书已存在时，脚本会停止，需先解绑并手动移除旧证书，避免选错身份。\r\n\r\nAndroid：先从安全设置导入 SynoVPN-Device.p12，导入用途选择 VPN/应用；导入密码见 certificate.json 的 certificate_import_password。这仅用于首次证书导入，并非 VPN 登录密码。另安装 SynoVPN-Server-CA.cer。添加 IKEv2/IPSec RSA，选择导入的客户端证书及服务器 CA；服务器/远程标识填 " + c.Domain + "，本地标识填 " + pki.DNSIdentity(d.ID) + "。不同版本和厂商支持不同，若无该选项不能保证免装客户端。\r\n\r\n解绑会撤销该证书、阻止重连并断开现有连接。证书可被复制，不能视为硬件锁定。按管理员配置分流内网和指定公网 IPv4，其余互联网流量保持原路径，不接管 IPv6。管理员修改当前用户的访问规则后，Apple 和 Android 请断开后重新连接；Windows 请重新下载此配置包，解压后运行 update-windows-routes.ps1（不需要重新安装证书）。\r\n"
 	files := map[string][]byte{"certificate.json": metadata, "SynoVPN-Device.p12": pfx, "SynoVPN-Server-CA.cer": serverRoot.Raw, "SynoVPN-Client-CA.cer": issuer.Raw, "使用说明.txt": []byte(instructions)}
 	if d.Platform == "windows" {
 		files["setup-windows.ps1"] = []byte(windowsScript)
 		files["install-windows.cmd"] = []byte(windowsLauncher)
+		files["update-windows-routes.ps1"] = []byte(windowsRouteScript)
 	}
 	var b bytes.Buffer
 	z := zip.NewWriter(&b)
@@ -143,6 +144,9 @@ func Generate(c config.Config, d store.Device, keyDER, serverCA, clientCA []byte
 
 //go:embed install-windows.cmd
 var windowsLauncher string
+
+//go:embed update-windows-routes.ps1
+var windowsRouteScript string
 
 //go:embed setup-windows.ps1
 var windowsScript string

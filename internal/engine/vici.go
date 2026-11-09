@@ -66,16 +66,20 @@ const Connection = "synovpn"
 const ReqID = "43177"
 
 type Gateway struct {
-	mu          sync.Mutex
-	C           config.Config
-	Control     Control
-	allowed     map[string]Device
-	ready       bool
-	Authority   *pki.Authority
-	conn        *vici.Message
-	enabled     bool
-	loadedCRL   []byte
-	lastSATrace string
+	mu                  sync.Mutex
+	C                   config.Config
+	Control             Control
+	allowed             map[string]Device
+	ready               bool
+	Authority           *pki.Authority
+	conn                *vici.Message
+	enabled             bool
+	loadedCRL           []byte
+	lastSATrace         string
+	ApplyRouteFirewall  func(config.Config) error
+	OnRouteFailure      func(error)
+	ApplyDeviceFirewall func(config.Config, []Device) error
+	devicePolicies      map[string][]string
 }
 
 func (g *Gateway) Initialize(ctx context.Context) error {
@@ -108,7 +112,7 @@ func (g *Gateway) Initialize(ctx context.Context) error {
 	if _, e = g.Control.Call(ctx, "load-pool", message(map[string]any{Connection: pool})); e != nil {
 		return e
 	}
-	child := message(map[string]any{"local_ts": g.C.Routes, "remote_ts": []string{"dynamic"}, "esp_proposals": []string{"aes256gcm16", "aes256-sha256", "aes128-sha256"}, "reqid": ReqID, "dpd_action": "clear", "rekey_time": "1h"})
+	child := message(map[string]any{"local_ts": g.C.TrafficRoutes(), "remote_ts": []string{"dynamic"}, "esp_proposals": []string{"aes256gcm16", "aes256-sha256", "aes128-sha256"}, "reqid": ReqID, "dpd_action": "clear", "rekey_time": "1h"})
 	clientCA, e := pki.DER(filepath.Join(g.C.PKIDir, "client-ca.pem"))
 	if e != nil {
 		return e
@@ -128,6 +132,13 @@ func (g *Gateway) Sync(ctx context.Context, ds []Device) (Status, error) {
 	if e := Validate(ds); e != nil {
 		return Status{}, e
 	}
+	if g.ApplyDeviceFirewall == nil {
+		for _, d := range ds {
+			if d.Routes != nil {
+				return Status{}, errors.New("engine does not support certificate-bound access policies")
+			}
+		}
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !g.ready {
@@ -135,7 +146,12 @@ func (g *Gateway) Sync(ctx context.Context, ds []Device) (Status, error) {
 	}
 	desired := map[string]Device{}
 	blocked := []string{}
+	pending := []string{}
 	for _, d := range ds {
+		if d.Pending {
+			pending = append(pending, d.ID)
+			continue
+		}
 		if d.Active {
 			desired[d.ID] = d
 		} else {
@@ -150,7 +166,7 @@ func (g *Gateway) Sync(ctx context.Context, ds []Device) (Status, error) {
 		active = append(active, pki.ActiveCertificate{ID: d.ID, Certificate: d.Certificate, Expires: d.Expires})
 	}
 	// The ledger permanently records revocation before the new signed CRL is loaded.
-	if _, e := g.Authority.Reconcile(active); e != nil {
+	if _, e := g.Authority.ReconcilePending(active, pending); e != nil {
 		return Status{}, e
 	}
 	g.allowed = desired
@@ -171,7 +187,11 @@ func (g *Gateway) Sync(ctx context.Context, ds []Device) (Status, error) {
 			}
 		}
 	}
-	if !g.enabled {
+	if g.ApplyDeviceFirewall != nil {
+		if e = g.syncDeviceRoutes(ctx, ds); e != nil {
+			return Status{}, e
+		}
+	} else if !g.enabled {
 		if _, e = g.Control.Call(ctx, "load-conn", g.conn); e != nil {
 			return Status{}, e
 		}
@@ -183,7 +203,7 @@ func (g *Gateway) Sync(ctx context.Context, ds []Device) (Status, error) {
 	}
 	status.Applied = map[string]bool{}
 	for _, d := range ds {
-		status.Applied[d.ID] = true
+		status.Applied[d.ID] = !d.Pending
 	}
 	return status, nil
 }
@@ -218,7 +238,7 @@ func (g *Gateway) sweep(ctx context.Context) (Status, error) {
 	trace := fmt.Sprintf("sessions=%d allowed=%d", len(sas), len(g.allowed))
 	for _, m := range sas {
 		trace += fmt.Sprintf(" roots=%q", m.Keys())
-		if sa, ok := m.Get(Connection).(*vici.Message); ok {
+		if sa, ok := sessionMessage(m); ok {
 			id := saDevice(sa)
 			_, allowed := g.allowed[id]
 			trace += fmt.Sprintf(" state=%q identity=%q mapped=%t allowed=%t", value(sa, "state"), value(sa, "remote-id"), id != "", allowed)
@@ -230,7 +250,7 @@ func (g *Gateway) sweep(ctx context.Context) (Status, error) {
 	}
 	terminated := false
 	for _, m := range sas {
-		sa, ok := m.Get(Connection).(*vici.Message)
+		sa, ok := sessionMessage(m)
 		if !ok {
 			continue
 		}
@@ -238,7 +258,7 @@ func (g *Gateway) sweep(ctx context.Context) (Status, error) {
 		if id == "" {
 			continue
 		}
-		if _, ok := g.allowed[id]; ok {
+		if g.connectionAllowed(id) {
 			if value(sa, "state") == "ESTABLISHED" {
 				out.Online[id] = true
 			}
@@ -259,13 +279,13 @@ func (g *Gateway) sweep(ctx context.Context) (Status, error) {
 			return Status{}, e
 		}
 		for _, m := range check {
-			sa, ok := m.Get(Connection).(*vici.Message)
+			sa, ok := sessionMessage(m)
 			if !ok {
 				continue
 			}
 			id := saDevice(sa)
 			if id != "" {
-				if _, ok := g.allowed[id]; !ok {
+				if !g.connectionAllowed(id) {
 					return Status{}, errors.New("revoked device still has an IKE SA")
 				}
 			}
@@ -342,4 +362,11 @@ func (g *Gateway) applyCRL(ctx context.Context) error {
 	}
 	g.loadedCRL = append([]byte(nil), der...)
 	return nil
+}
+
+func (g *Gateway) connectionAllowed(id string) bool {
+	if _, ok := g.allowed[id]; !ok {
+		return false
+	}
+	return g.ApplyDeviceFirewall == nil || len(g.devicePolicies[id]) > 0
 }

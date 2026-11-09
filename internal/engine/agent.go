@@ -3,11 +3,34 @@ package engine
 import (
 	"encoding/json"
 	"net/http"
+	"synovpn/internal/config"
 	"synovpn/internal/pki"
 )
 
 func AgentHandler(e Engine) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /public-routes", func(w http.ResponseWriter, r *http.Request) {
+		manager, ok := e.(RouteManager)
+		if !ok {
+			http.Error(w, "unsupported", 501)
+			return
+		}
+		var routes []string
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&routes) != nil {
+			http.Error(w, "invalid routes", 400)
+			return
+		}
+		if _, err := config.NormalizePublicRoutes(routes); err != nil {
+			http.Error(w, "invalid routes", 400)
+			return
+		}
+		if err := manager.SetPublicRoutes(r.Context(), routes); err != nil {
+			http.Error(w, "routing policy unavailable", 503)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			ID string `json:"id"`
@@ -40,7 +63,7 @@ func AgentHandler(e Engine) http.Handler {
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) { s, err := e.Status(r.Context()); agentReply(w, s, err) })
 	mux.HandleFunc("POST /sync", func(w http.ResponseWriter, r *http.Request) {
 		var ds []Device
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20))
+		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&ds) != nil || Validate(ds) != nil {
 			http.Error(w, "invalid snapshot", 400)
