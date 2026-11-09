@@ -49,17 +49,9 @@ def elf(path, machine):
             raise SystemExit(f'Dynamic ELF interpreter is not permitted: {path}')
 
 def png(size):
-    rows=[]
-    for y in range(size):
-        row=bytearray([0])
-        for x in range(size):
-            # Code-drawn shield / upward arrow, not a downloaded brand asset.
-            shield=(size*.20<x<size*.80 and size*.15<y<size*.62) or (size*.32<x<size*.68 and size*.62<=y<size*.82)
-            arrow=(abs(x-size*.50)<size*.045 and size*.34<y<size*.64) or (abs(y-(abs(x-size*.50)+size*.27))<size*.04 and abs(x-size*.50)<size*.17)
-            row.extend((255,255,255,255) if shield and arrow else (21,94,76,255) if shield else (0,0,0,0))
-        rows.append(row)
-    def chunk(name, data): return struct.pack('!I',len(data))+name+data+struct.pack('!I',zlib.crc32(name+data)&0xffffffff)
-    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('!IIBBBBB',size,size,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(b''.join(rows)))+chunk(b'IEND',b'')
+    # Checked-in, antialiased artwork; regenerate with python3 tools/icon.py.
+    return (ROOT/'packaging/ui/images'/f'icon_{size}.png').read_bytes()
+
 
 def add(tar, name, data=None, executable=False, link=None, hardlink=None):
     item=tarfile.TarInfo(name);item.uid=item.gid=0;item.uname=item.gname='root';item.mtime=1793577600
@@ -109,7 +101,7 @@ def main():
         add(tar,'bin/synovpn',(build/f'synovpn-linux-{args.arch}').read_bytes(),True)
         add(tar,'ui/app.cgi',hardlink='bin/synovpn',executable=True)
         add(tar,'ui/config',(ROOT/'packaging/ui/config').read_bytes())
-        for size in (16,24,32,48,64,72,256):add(tar,f'ui/images/icon_{size}.png',png(size))
+        for size in (16,24,32,48,64,72,128,256):add(tar,f'ui/images/icon_v8_{size}.png',png(size))
         for f in sorted(runtime.rglob('*')):
             if f.is_file():add(tar,'runtime/'+f.relative_to(runtime).as_posix(),f.read_bytes(),f.name=='charon')
         for f in sorted((ROOT/'packaging/engine').iterdir()):
@@ -125,7 +117,7 @@ def main():
         for name,content in notices.items():add(tar,'licenses/go/'+name,content)
     info=f'''package="SynoVPN"
 displayname="SynoVPN"
-version="0.5.0-7"
+version="0.5.0-9"
 description="DSM session authenticated per-user certificate IKEv2 device portal. Preview release: NAS validation required."
 arch="{metadata}"
 os_min_ver="{min_dsm}"
@@ -141,7 +133,7 @@ silent_upgrade="yes"
 silent_uninstall="no"
 '''
     tag=f'{args.target}-{metadata}' if args.target else args.arch
-    dist=ROOT/'dist';dist.mkdir(exist_ok=True);spk=dist/f'SynoVPN-0.5.0-7-{tag}.spk'
+    dist=ROOT/'dist';dist.mkdir(exist_ok=True);spk=dist/f'SynoVPN-0.5.0-9-{tag}.spk'
     with tarfile.open(spk,'w',format=tarfile.USTAR_FORMAT) as tar:
         add(tar,'INFO',info.encode());add(tar,'package.tgz',data.getvalue())
         add(tar,'PACKAGE_ICON.PNG',png(64));add(tar,'PACKAGE_ICON_256.PNG',png(256))
