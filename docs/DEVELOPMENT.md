@@ -4,9 +4,11 @@
 
 DSM CGI 硬链接调用 `synovpn` 桥，将真实 CGI 环境转发到套件账号的 Unix socket。浏览器伪造的内部桥头和 Forwarded 信息会被移除。门户调用 DSM authenticate.cgi 校验 Cookie/SynoToken，并查本地账号和组；不保存 DSM 密码。
 
+默认公网及按用户规则在 SQLite 持久化，规则与审计同一事务提交。门户将每台设备的有效规则随完整设备快照发送至受令牌保护的引擎。引擎启动时不开放共享通配连接，仅在校验设备证书与显式规则后加载独立的 DNS / DN 身份连接变体。内核按设备 reqid 校验 IPsec 与目标网段，NAT 仅处理规则并集。首次启动防火墙拒绝所有设备，直到快照应用；没有公网/内网权限的设备不加载连接。修改只终止规则改变的设备，后台相同快照幂等。失败后停止引擎且不报告已应用，重启后从门户重放期望策略。
+
 Web → 固定 loopback 127.0.0.1:18447 → 容器引擎，使用独立令牌。容器使用 VICI 管理自己的 charon，Linux 内核处理 IPsec 数据。门户不访问 Docker socket，CA 与撤销账本保留在引擎命名卷。
 
-普通 API 在逐次认证、同源/CSRF 校验后操作 owner 限定设备。管理员路由位于 `/api/admin/`，只允许元数据列表和解绑；SQL 元数据查询不读取私钥。管理员解绑和审计原子提交，后端成功后才确认 revoked。
+普通 API 在逐次认证、同源/CSRF 校验后操作 owner 限定设备。管理员路由位于 `/api/admin/`，提供元数据列表、解绑及受限公网出口列表；SQL 元数据查询不读取私钥。管理员解绑和审计原子提交，后端成功后才确认 revoked。
 
 二维码凭据只允许单设备单次领取，摘要存在内存，fragment 令牌打开后清除并通过同源 POST 领取。它不授予管理账号权限。
 
@@ -15,7 +17,7 @@ Web → 固定 loopback 127.0.0.1:18447 → 容器引擎，使用独立令牌。
 - 页面与样式：`internal/web/ui.html`，通过 Go embed，修改后必须重新编译/重启。
 - 个人、管理员、扫码 API：`internal/web/app.go`、`admin.go`、`enrollment.go`。
 - DSM 认证/组权限：`internal/auth`。
-- SQLite/审计：`internal/store`；当前 schema 2，管理员功能无迁移。
+- SQLite/审计：`internal/store`；当前 schema 2，启动时幂等补齐 settings、portal_users 和 user_routes 表。
 - Apple/Windows/Android 配置：`internal/profile`。
 - 证书/CRL 与 IKE 身份：`internal/pki`、`internal/engine`。
 - DSM 安装与容器资源：`packaging`。
@@ -28,7 +30,7 @@ Web → 固定 loopback 127.0.0.1:18447 → 容器引擎，使用独立令牌。
 4. 构建 SPK、检查哈希、包权限和许可证，部署到测试 NAS。
 5. 实机验证 SSO、身份隔离、客户端导入、外网握手、内网/DNS 和解绑重连拒绝。分别记录模拟测试与实机结果。
 
-当前检查共 48 个 Go 测试，数量随代码变化。详见 VALIDATION.md 与 docs/validation。
+测试覆盖认证、用户隔离、配置导出、撤销和访问规则故障恢复，数量随代码变化。详见 VALIDATION.md 与 docs/validation。
 
 ## 版本与发布
 

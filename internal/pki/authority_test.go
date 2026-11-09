@@ -170,3 +170,29 @@ func TestClientIdentityMappingAcrossNativeClients(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingSnapshotPreservesIssuanceWithoutResurrectingRevocation(t *testing.T) {
+	a := authority(t)
+	id := "aaaaaaaaaaaaaaaaaaaaaa"
+	_, req := request(t, id)
+	issued, err := a.Issue(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.ReconcilePending(nil, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := a.Issue(req)
+	if err != nil || !bytes.Equal(again.Certificate, issued.Certificate) {
+		t.Fatal("lost response retry revoked issuance", err)
+	}
+	if err = a.RevokeIDs([]string{id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.ReconcilePending(nil, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Issue(req); err == nil {
+		t.Fatal("pending state resurrected revoked certificate")
+	}
+}

@@ -74,6 +74,9 @@ func Open(dir string) (*Store, error) {
  UPDATE devices SET state='revoking',applied=0,private_key=NULL,error='旧版口令配置已停用，请重新创建设备证书' WHERE state!='revoked';`)
 	}
 	if e == nil {
+		_, e = tx.Exec("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS user_routes(owner TEXT PRIMARY KEY,routes TEXT NOT NULL); CREATE TABLE IF NOT EXISTS portal_users(owner TEXT PRIMARY KEY,name TEXT NOT NULL)")
+	}
+	if e == nil {
 		_, e = tx.Exec("PRAGMA user_version=2")
 	}
 	if e != nil {

@@ -36,7 +36,7 @@ func (f *fakeControl) Call(ctx context.Context, name string, m *vici.Message) (*
 			uid := value(m, "ike-id")
 			remaining := []*vici.Message{}
 			for _, x := range f.sas {
-				sa, _ := x.Get(Connection).(*vici.Message)
+				sa, _ := sessionMessage(x)
 				if sa == nil || value(sa, "uniqueid") != uid {
 					remaining = append(remaining, x)
 				}
